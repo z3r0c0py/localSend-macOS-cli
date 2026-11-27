@@ -21,6 +21,9 @@ macOS 12+, Swift 5.7.
   
 - **Small footprint** - binary is only 227K
 
+- **Memory Footprint** - 8.9M peak physical footprint (`9090K` via `vmmap -summary`, ~8.7 MB / `8882K` idle) on ARM64 macOS (macOS 15.8.1) running under `launchd`.
+
+---
 
 ```
 ./localsend-cli --help
