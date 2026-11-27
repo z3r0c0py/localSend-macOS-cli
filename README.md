@@ -76,11 +76,11 @@ This CLI uses a hybrid strategy: it listens for multicast announcements first (t
 - Large file friendly – Uploads are streamed directly to disk rather than buffered in memory.
 
 **Peformance Wins**
-  ✅ Uploads streamed directly to disk
-  ✅ Chunked uploads streamed incrementally
-  ✅ No full-file buffering in RAM
-  ✅ Dead connections cleaned up automatically
-  ✅ Single active receive loop per connection
-  ✅ Non-blocking discovery response path
-  ✅ Automatic cleanup of abandoned sessions
+  - ✅ Uploads streamed directly to disk
+  - ✅ Chunked uploads streamed incrementally
+  - ✅ No full-file buffering in RAM
+  - ✅ Dead connections cleaned up automatically
+  - ✅ Single active receive loop per connection
+  - ✅ Non-blocking discovery response path
+  - ✅ Automatic cleanup of abandoned sessions
 
