@@ -17,7 +17,7 @@ Commands:
 
 ### Compiling
 ```
-swiftc -O main.swift -o localsend-cli
+swiftc -Osize -Xlinker -dead_strip main.swift -o localsend-cli && strip localsend-cli
 ```
 
 ### Autosave to ~/LocalSend
