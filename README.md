@@ -56,4 +56,4 @@ swiftc -O main.swift -o localsend-cli
 </plist>
 
 ```
-Running localsend-cli is so that you can create a LaunchAgent - your Mac always is running localsend and saves to ~/LocalSend, you dont have to launch the GUI all the time.
+:white_check_mark: **Easy:** By running localsend-cli as a LaunchAgent, your Mac stays ready to receive files silently in the background. Everything automatically saves to ~/LocalSend, giving you a seamless, always-on experience without ever needing to open the GUI app.
