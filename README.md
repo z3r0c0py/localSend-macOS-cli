@@ -18,6 +18,8 @@ macOS 12+, Swift 5.7.
 - **Hybrid device discovery** – Uses multicast for fast local discovery with reliable fallback mechanisms when multicast is unavailable.
 
 - **No keychain clutter** – Temporary TLS certificates remain in memory and are never imported into the macOS login keychain.
+  
+- **Small footprint** - binary is only 227K
 
 
 ```
