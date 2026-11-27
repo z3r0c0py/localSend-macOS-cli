@@ -67,7 +67,7 @@ func errPrint(_ s: String) {
     logLock.lock(); defer { logLock.unlock() }
     let msg = s + "\n"
     if let data = msg.data(using: .utf8) {
-        FileHandle.standardError.write(data)
+        try? FileHandle.standardError.write(contentsOf: data)
     }
     if let fh = logFileHandle {
         writeLogLine("ERR: \(s)", to: fh)
@@ -289,7 +289,8 @@ func generateSelfSignedCert() -> Certificate {
         kSecImportToMemoryOnly as String: true,
     ] as CFDictionary
     let status = SecPKCS12Import(p12 as CFData, options, &items)
-    guard status == errSecSuccess, let array = items as? [[String: Any]],
+    guard status == errSecSuccess,
+          let array = items as? [[String: Any]],
           let identity = array.first?[kSecImportItemIdentity as String] as! SecIdentity? else {
         exitWithError("Failed to import PKCS12 identity (status \(status))")
     }
@@ -381,7 +382,9 @@ final class HTTPServerConnection {
     private let handler: (HTTPRequest, @escaping (HTTPResponse) -> Void) -> Void
     private var buf: [UInt8] = []
     private var closed = false
-    private var isReceiving = false   // Fix #2: never have more than one receive armed
+    // CRITICAL: NWConnection crashes or behaves erratically if you arm multiple `.receive()`
+    // calls simultaneously. This flag ensures we only ever have one pending read at a time.
+    private var isReceiving = false
 
     // Fix #1: server sets this so it can drop its strong reference when we close.
     var onClose: (() -> Void)?
@@ -393,6 +396,7 @@ final class HTTPServerConnection {
     private var streamingReceived = 0
     private var streamingDest: String?
     private var streamingPath = ""
+    private var tempDest: String?  // !ATOMIC! path to the temp file for atomic writes
 
     // Chunked upload decoding (senders that stream without a Content-Length header)
     private enum ChunkState { case size, data, dataEnd, trailer }
@@ -447,13 +451,18 @@ final class HTTPServerConnection {
     private func abortStreaming() {
         _ = try? streamFile?.close()
         streamFile = nil
+
+        // !! ATOMIC !! delete the temp file if it exists (atomic-write cleanup)
+        if let temp = tempDest {
+            _ = try? FileManager.default.removeItem(atPath: temp)
+            tempDest = nil
+        }
+
         if let dest = streamingDest {
             errPrint("  Incomplete upload discarded: \(dest) (\(streamingReceived)/\(streamExpectedLength) bytes)")
-            _ = dest.withCString { Darwin.unlink($0) }
         }
-        // Fix #4: don't leave the receiver wedged in a dead session.
+        // !! DEAD SESSION !! don't leave the receiver wedged in a dead session.
         serverState?.resetSession()
-
         streamingDest = nil
         streamingPath = ""
         streamExpectedLength = 0
@@ -647,6 +656,7 @@ final class HTTPServerConnection {
             return
         }
 
+        // !! ATOMIC !! compute final destination (with collision avoidance) but write to temp file first
         var dest = baseDest
         var i = 1
         while fm.fileExists(atPath: dest) {
@@ -657,15 +667,21 @@ final class HTTPServerConnection {
             i += 1
         }
 
-        fm.createFile(atPath: dest, contents: nil)
-        guard let fh = FileHandle(forWritingAtPath: dest) else {
+        // !! ATOMIC !! write to UUID-named temp file in the SAME directory (required for atomic rename)
+        let tempName = ".localsend_tmp_\(UUID().uuidString)"
+        let tempPath = (parentDir as NSString).appendingPathComponent(tempName)
+        self.tempDest = tempPath
+
+        fm.createFile(atPath: tempPath, contents: nil)
+        guard let fh = FileHandle(forWritingAtPath: tempPath) else {
             server.restoreToken(fileId: grant.fileId, token: grant.token)
-            sendAndContinue(HTTPResponse.text(500, "Cannot open file"), closeAfter: true)
+            _ = try? fm.removeItem(atPath: tempPath)
+            sendAndContinue(HTTPResponse.text(500, "Cannot open temp file"), closeAfter: true)
             return
         }
         streamFile = fh
         streamingReceived = 0
-        streamingDest = dest
+        streamingDest = dest    // !! ATOMIC !! remember "final" name for atomic rename later
 
         if isChunked {
             chunked = true
@@ -698,6 +714,9 @@ final class HTTPServerConnection {
     }
 
     /// Decodes an HTTP/1.1 chunked body straight into the destination file.
+    /// NOTE: We implement this manually (rather than buffering) so we can stream
+    /// multi-gigabyte uploads directly to disk without exhausting RAM. It uses a
+    /// state machine to handle chunks that span across multiple TCP packets.
     private func appendChunked(_ data: [UInt8]) {
         chunkPending.append(contentsOf: data)
         var pos = 0
@@ -758,22 +777,61 @@ final class HTTPServerConnection {
     private func finishStreaming() {
         _ = try? streamFile?.close()
         streamFile = nil
-        if let dest = streamingDest {
-            logInfo("  Saved: \(dest) (\(streamingReceived) bytes)")
-            if expectedMetaSize >= 0 && streamingReceived != expectedMetaSize {
-                errPrint("  WARNING: size mismatch for \(dest): got \(streamingReceived), sender announced \(expectedMetaSize)")
-            }
+
+        guard let temp = tempDest, let final = streamingDest else {
+            resetChunkState()
+            serverState?.noteFileReceived()
+            sendAndContinue(HTTPResponse.ok, closeAfter: false)
+            return
         }
-        streamingPath = ""
+
+        // !! ATOMIC !! validate size BEFORE making file permanent
+        if expectedMetaSize >= 0 && streamingReceived != expectedMetaSize {
+            errPrint("  Size mismatch for \(final): got \(streamingReceived), expected \(expectedMetaSize)")
+            _ = try? FileManager.default.removeItem(atPath: temp)
+            tempDest = nil
+            streamingDest = nil
+            streamingPath = ""
+            streamExpectedLength = 0
+            streamRemaining = 0
+            streamingReceived = 0
+            resetChunkState()
+            serverState?.resetSession()
+            sendAndContinue(HTTPResponse.text(400, "Size mismatch"), closeAfter: true)
+            return
+        }
+
+        // !! ATOMIC !! rename — instant and safe on the same filesystem
+        do {
+            try FileManager.default.moveItem(atPath: temp, toPath: final)
+            logInfo("  Saved: \(final) (\(streamingReceived) bytes)")
+        } catch {
+            errPrint("Failed to finalize file \(final): \(error)")
+            _ = try? FileManager.default.removeItem(atPath: temp)
+            tempDest = nil
+            streamingDest = nil
+            streamingPath = ""
+            streamExpectedLength = 0
+            streamRemaining = 0
+            streamingReceived = 0
+            resetChunkState()
+            serverState?.resetSession()
+            sendAndContinue(HTTPResponse.text(500, "Finalize failed"), closeAfter: true)
+            return
+        }
+
+        // Cleanup state
+        tempDest = nil
         streamingDest = nil
+        streamingPath = ""
         streamExpectedLength = 0
         streamRemaining = 0
         streamingReceived = 0
         resetChunkState()
+
         serverState?.noteFileReceived()
         sendAndContinue(HTTPResponse.ok, closeAfter: false)
     }
-
     private func sendAndContinue(_ response: HTTPResponse, closeAfter: Bool) {
         guard !closed else { return }
         var head = "HTTP/1.1 \(response.status) \(statusText(response.status))\r\n"
@@ -831,6 +889,11 @@ final class ReceiveState {
     let autoAccept: Bool
     let registry: DeviceRegistry
 
+    // !! STALE SESSION !! for the stale-session cleanup timer
+    var sessionCreatedAt: Date?
+    private var cleanupTimer: DispatchSourceTimer?
+    private let cleanupQueue = DispatchQueue(label: "com.localsend.cleanup", qos: .background)
+
     init(alias: String, fingerprint: String, listenPort: Int, saveDir: String,
          autoAccept: Bool, registry: DeviceRegistry) {
         self.alias = alias
@@ -839,6 +902,35 @@ final class ReceiveState {
         self.saveDir = saveDir
         self.autoAccept = autoAccept
         self.registry = registry
+        // !! STALE SESSION !! start the background cleanup timer
+        startSessionCleanup()
+    }
+
+    // !! STALE SESSION !! periodically clear stale sessions (5-minute timeout)
+    private func startSessionCleanup() {
+        cleanupTimer = DispatchSource.makeTimerSource(queue: cleanupQueue)
+        cleanupTimer?.schedule(deadline: .now() + 60, repeating: 60)
+        cleanupTimer?.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            self.lock.lock()
+            defer { self.lock.unlock() }
+
+            if let createdAt = self.sessionCreatedAt,
+               Date().timeIntervalSince(createdAt) > 300 {
+                logInfo("Cleaning up stale transfer session (5 minute timeout).")
+                self.session = nil
+                self.fileTokens = [:]
+                self.fileMeta = [:]
+                self.receivedCount = 0
+                self.expectedCount = 0
+                self.sessionCreatedAt = nil
+            }
+        }
+        cleanupTimer?.resume()
+    }
+
+    deinit {
+        cleanupTimer?.cancel()
     }
 
     /// Validates the request and, if valid, consumes the file's token (so it can't be replayed).
@@ -880,6 +972,7 @@ final class ReceiveState {
         fileMeta = [:]
         receivedCount = 0
         expectedCount = 0
+        sessionCreatedAt = nil
         logInfo("Transfer session reset due to error or abort.")
     }
 
@@ -890,6 +983,7 @@ final class ReceiveState {
             session = nil
             fileTokens = [:]
             fileMeta = [:]
+            sessionCreatedAt = nil
             logInfo("\nAll \(expectedCount) file(s) received.")
         }
     }
@@ -939,7 +1033,10 @@ final class LocalSendHTTPServer {
             self.connections[id] = conn
             self.connLock.unlock()
 
-            // Capture only the id, not `conn`, to avoid a retain cycle.
+            // ARC DANCE: The server must strongly retain the connection in its dictionary
+            // so it doesn't deallocate mid-transfer. However, the connection cannot strongly
+            // retain the server, or we get a memory leak. We capture only the `id` and use
+            // this `onClose` callback to remove the strong reference when the socket closes.
             conn.onClose = { [weak self] in
                 guard let self = self else { return }
                 self.connLock.lock()
@@ -1464,56 +1561,56 @@ func cmdReceive(saveDirArg: String, autoAccept: Bool, alias: String) {
     var listenPort = Int(PORT)
     let registry = DeviceRegistry(ownFingerprint: certificate.fingerprint)
 
-    let handler: (HTTPRequest, @escaping (HTTPResponse) -> Void) -> Void = { request, respond in
-        guard let state = activeServer?.receiveState else {
-            respond(HTTPResponse.text(500, "Server not ready"))
-            return
-        }
-        switch (request.method, request.path) {
-        case ("GET", "/api/localsend/v2/info"), ("GET", "/api/localsend/v1/info"):
-            respond(.codable(200, deviceInfo(alias: alias, fingerprint: certificate.fingerprint,
-                                             port: state.listenPort)))
-
-        case ("POST", "/api/localsend/v2/register"):
-            if let info = try? JSONDecoder().decode(DeviceInfo.self, from: request.body) {
-                registry.add(DiscoveredDevice(ip: request.remoteIP, info: info))
-            }
-            respond(HTTPResponse.ok)
-
-        case ("POST", "/api/localsend/v2/prepare-upload"), ("POST", "/api/localsend/v1/send-request"):
-            handlePrepareUpload(request: request, state: state, respond: respond, v2: request.path.contains("v2"))
-
-        case ("POST", "/api/localsend/v2/upload"), ("POST", "/api/localsend/v1/send"):
-            respond(HTTPResponse.text(403, "Invalid session"))
-
-        case ("POST", "/api/localsend/v2/cancel"), ("POST", "/api/localsend/v1/cancel"):
-            // Only the holder of the live session id may cancel (not a pending reservation).
-            let sid = request.query["sessionId"] ?? ""
-            var cancelled = false
-            state.lock.lock()
-            if let current = state.session, !sid.isEmpty, current == sid {
-                state.session = nil
-                state.fileTokens = [:]
-                state.fileMeta = [:]
-                cancelled = true
-            }
-            state.lock.unlock()
-            if cancelled { logInfo("\nTransfer cancelled by sender.") }
-            respond(HTTPResponse.ok)
-
-        default:
-            respond(HTTPResponse.text(404, "Not found"))
-        }
-    }
-
     var serverOpt: LocalSendHTTPServer?
     var stateOpt: ReceiveState?
+
     for tryPort in [Int(PORT), Int(PORT) + 1, Int(PORT) + 2] {
+        // 1. Create the state FIRST
+        let state = ReceiveState(alias: alias, fingerprint: certificate.fingerprint,
+                                 listenPort: tryPort, saveDir: saveDir,
+                                 autoAccept: autoAccept, registry: registry)
+
+        // 2. Define the handler SECOND, capturing `state` directly (no data race!)
+        let handler: (HTTPRequest, @escaping (HTTPResponse) -> Void) -> Void = { request, respond in
+            switch (request.method, request.path) {
+            case ("GET", "/api/localsend/v2/info"), ("GET", "/api/localsend/v1/info"):
+                respond(.codable(200, deviceInfo(alias: alias, fingerprint: certificate.fingerprint,
+                                                 port: state.listenPort)))
+
+            case ("POST", "/api/localsend/v2/register"):
+                if let info = try? JSONDecoder().decode(DeviceInfo.self, from: request.body) {
+                    registry.add(DiscoveredDevice(ip: request.remoteIP, info: info))
+                }
+                respond(HTTPResponse.ok)
+
+            case ("POST", "/api/localsend/v2/prepare-upload"), ("POST", "/api/localsend/v1/send-request"):
+                handlePrepareUpload(request: request, state: state, respond: respond, v2: request.path.contains("v2"))
+
+            case ("POST", "/api/localsend/v2/upload"), ("POST", "/api/localsend/v1/send"):
+                respond(HTTPResponse.text(403, "Invalid session"))
+
+            case ("POST", "/api/localsend/v2/cancel"), ("POST", "/api/localsend/v1/cancel"):
+                let sid = request.query["sessionId"] ?? ""
+                var cancelled = false
+                state.lock.lock()
+                if let current = state.session, !sid.isEmpty, current == sid {
+                    state.session = nil
+                    state.fileTokens = [:]
+                    state.fileMeta = [:]
+                    cancelled = true
+                }
+                state.lock.unlock()
+                if cancelled { logInfo("\nTransfer cancelled by sender.") }
+                respond(HTTPResponse.ok)
+
+            default:
+                respond(HTTPResponse.text(404, "Not found"))
+            }
+        }
+
+        // 3. Create the server with the handler
         do {
             let candidate = try LocalSendHTTPServer(port: UInt16(tryPort), certificate: certificate, handler: handler)
-            let state = ReceiveState(alias: alias, fingerprint: certificate.fingerprint,
-                                     listenPort: tryPort, saveDir: saveDir,
-                                     autoAccept: autoAccept, registry: registry)
             candidate.receiveState = state
             if candidate.startAndWait() {
                 serverOpt = candidate
@@ -1524,9 +1621,12 @@ func cmdReceive(saveDirArg: String, autoAccept: Bool, alias: String) {
             candidate.stop()
         } catch { continue }
     }
+
     guard let server = serverOpt, let state = stateOpt else {
         exitWithError("Could not bind any listen port")
     }
+    
+    // We still assign to activeServer for the signal handler to call .stop() on it
     activeServer = server
 
     let listenerThread = Thread {
@@ -1561,8 +1661,10 @@ func handlePrepareUpload(request: HTTPRequest, state: ReceiveState,
     }
     let senderName = body.info.alias
 
-    // Fix #4: reserve the session *before* prompting so a second sender gets 409.
-    // The marker is random so nobody can forge it as a sessionId.
+    // RACE CONDITION PREVENTION: If two devices try to send files at the exact same
+    // millisecond, we must lock the session *before* we pause to ask the user "Accept? [Y/n]".
+    // Otherwise, both senders would get 200 OK and overwrite each other's tokens.
+    // We use a random marker so a malicious peer can't guess the session ID to bypass the prompt.
     let pendingMarker = "pending-" + UUID().uuidString
     state.lock.lock()
     if state.session != nil {
@@ -1619,7 +1721,9 @@ func handlePrepareUpload(request: HTTPRequest, state: ReceiveState,
 
     let sessionId = UUID().uuidString
     var fileTokens: [String: String] = [:]
-    for fid in body.files.keys { fileTokens[fid] = UUID().uuidString }
+    for fid in body.files.keys {
+        fileTokens[fid] = UUID().uuidString
+    }
 
     state.lock.lock()
     guard state.session == pendingMarker else {
@@ -1631,9 +1735,11 @@ func handlePrepareUpload(request: HTTPRequest, state: ReceiveState,
     state.fileTokens = fileTokens
     state.fileMeta = body.files
     state.receivedCount = 0
-    state.expectedCount = body.files.count
+    // FIX: Only expect the files we actually accepted (generated tokens for)
+    state.expectedCount = fileTokens.count
+    state.sessionCreatedAt = Date()
     state.lock.unlock()
-
+    
     if v2 {
         respond(.codable(200, PrepareUploadResponse(sessionId: sessionId, files: fileTokens)))
     } else {
@@ -1812,6 +1918,12 @@ let alias = globalAlias ?? hostname()
 
 func parseFlag(_ name: String, _ args: inout [String]) -> String? {
     guard let i = args.firstIndex(of: name) else { return nil }
+    
+    // FIX: Ignore flags that appear after "--"
+    if let dashDashIndex = args.firstIndex(of: "--"), dashDashIndex < i {
+        return nil
+    }
+    
     guard i + 1 < args.count else { exitWithError("\(name) requires a value") }
     let value = args[i + 1]
     args.removeSubrange(i...i + 1)
@@ -1820,10 +1932,22 @@ func parseFlag(_ name: String, _ args: inout [String]) -> String? {
 
 func parseBoolFlag(_ names: [String], _ args: inout [String]) -> Bool {
     var found = false
-    for name in names {
-        while let i = args.firstIndex(of: name) {
+    var i = 0
+    while i < args.count {
+        // FIX: Stop parsing flags entirely once "--" is encountered
+        if args[i] == "--" {
+            break
+        }
+        if names.contains(args[i]) {
             args.remove(at: i)
             found = true
+            // Don't increment `i` because the array shifted left
+        } else {
+            i += 1
+        }
+        // Also remove the "--" itself so it doesn't get passed as a filename
+        if i < args.count && args[i] == "--" {
+            args.remove(at: i)
         }
     }
     return found
