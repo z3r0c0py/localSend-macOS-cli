@@ -1,7 +1,7 @@
 # localSend CLI for MacOS in Swift
 
 ### Send and receive files via the LocalSend v2 protocol.
-### macOS 12+, Swift 5.7.
+macOS 12+, Swift 5.7.
 
 ## Highlights
 
