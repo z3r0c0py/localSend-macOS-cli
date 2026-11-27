@@ -73,7 +73,7 @@ swiftc -Osize -Xlinker -dead_strip main.swift -o localsend-cli && strip localsen
 </plist>
 
 ```
-:white_check_mark: **Background it:** By running localsend-cli as a LaunchAgent, your Mac stays ready to receive files silently in the background. Everything automatically saves to ~/LocalSend, giving you a seamless, always-on experience without ever needing to open the GUI app.
+⛺️ **Background it:** By running localsend-cli as a LaunchAgent, your Mac stays ready to receive files silently in the background. Everything automatically saves to ~/LocalSend, giving you a seamless, always-on experience without ever needing to open the GUI app.
 
 📡 **Discovery: Why Hybrid Multicast + Subnet Fallback?**
 
