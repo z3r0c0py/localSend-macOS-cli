@@ -1,9 +1,9 @@
-# ⌨&nbsp;&nbsp;localSend CLI for MacOS in Swift
+# localSend CLI for MacOS in Swift
 
 ### Send and receive files via the LocalSend v2 protocol.
 macOS 12+, Swift 5.7.
 
-## Highlights
+## ✨  Highlights
 
 - **Atomic, corruption-proof file saves** – Files are written to temporary storage and atomically renamed when complete. Interrupted transfers never leave behind partial files.
 
@@ -38,6 +38,7 @@ swiftc -Osize -Xlinker -dead_strip main.swift -o localsend-cli && strip localsen
 ```
 
 ### Autosave to ~/LocalSend
+background process for launchAgent keepalive
 ```
 ./localsend-cli receive -y --save-dir ~/LocalSend
 ```
@@ -73,9 +74,10 @@ swiftc -Osize -Xlinker -dead_strip main.swift -o localsend-cli && strip localsen
 </plist>
 
 ```
-⛺️ **Background it:** By running localsend-cli as a LaunchAgent, your Mac stays ready to receive files silently in the background. Everything automatically saves to ~/LocalSend, giving you a seamless, always-on experience without ever needing to open the GUI app.
+## ⛺️ &nbsp; Background it
+By running localsend-cli as a LaunchAgent, your Mac stays ready to receive files silently in the background. Everything automatically saves to ~/LocalSend, giving you a seamless, always-on experience without ever needing to open the GUI app.
 
-📡 **Discovery: Why Hybrid Multicast + Subnet Fallback?**
+## 📡 &nbsp; Discovery: Why Hybrid Multicast + Subnet Fallback?
 
 LocalSend's native discovery relies on UDP multicast to the 224.0.0.167 group — it's fast, zero-config, and works beautifully on home networks where devices share a flat broadcast domain. However, multicast is notoriously fragile in the wild: corporate networks with AP isolation, VLAN-segmented IoT setups, strict mesh Wi-Fi systems, and guest networks all silently drop multicast packets. A CLI tool that only speaks multicast would appear broken on these networks, even though the devices are right there.
 
