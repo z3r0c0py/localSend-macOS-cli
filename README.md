@@ -56,3 +56,4 @@ swiftc -O main.swift -o localsend-cli
 </plist>
 
 ```
+Running localsend-cli is so that you can create a LaunchAgent - your Mac always is running localsend and saves to ~/LocalSend, you dont have to launch the GUI all the time.
