@@ -24,3 +24,35 @@ swiftc -O main.swift -o localsend-cli
 ```
 ./localsend-cli receive -y --save-dir ~/LocalSend
 ```
+### Sample LaunchAgent
+```
+<?xml version="1.0" encoding="UTF-0"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>zerocopy.localsend</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/opt/zerocopy/localsend</string>
+        <string>--alias</string>
+        <string>Zero</string>
+        <string>--log-file</string>
+        <string>/tmp/localsend.log</string>
+        <string>receive</string>
+        <string>-y</string>
+        <string>--save-dir</string>
+        <string>/Users/zerocopy/LocalSend</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>/Users/zerocopy/Library/Logs/localsend.out.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/zerocopy/Library/Logs/localsend.err.log</string>
+</dict>
+</plist>
+
+```
