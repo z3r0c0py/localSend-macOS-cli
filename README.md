@@ -66,7 +66,7 @@ The alternative — brute-force scanning the entire /24 subnet — is equally pr
 
 This CLI uses a hybrid strategy: it listens for multicast announcements first (the fast path), and only if the registry is empty after the timeout does it fall back to a targeted subnet scan. This gives you instant discovery on well-behaved networks, while still finding devices on restrictive ones — without the constant background noise of a full scan, a pragmatic tradeoff.
 
-**The Roundup**
+**Overall Roundup**
 - Atomic, corruption-proof file saves — Partial files are never left in the destination directory. If a transfer is interrupted, the temp file is cleaned up automatically.
 - Self-healing sessions — If a sender crashes or disconnects mid-transfer, the receiver automatically clears the stale session after 5 minutes, preventing the "409 Busy" deadlock.
 - Hybrid discovery — Fast multicast when it works, reliable subnet fallback when it doesn't, without the network noise of constant scanning.
@@ -74,4 +74,13 @@ This CLI uses a hybrid strategy: it listens for multicast announcements first (t
 - Memory-safe connection management – Network connections are retained only while active and cleaned up automatically when closed.
 - No keychain clutter – Temporary TLS certificates remain in memory and are not imported into the user's login keychain.
 - Large file friendly – Uploads are streamed directly to disk rather than buffered in memory.
+
+**Peformance Wins**
+  ✅ Uploads streamed directly to disk
+  ✅ Chunked uploads streamed incrementally
+  ✅ No full-file buffering in RAM
+  ✅ Dead connections cleaned up automatically
+  ✅ Single active receive loop per connection
+  ✅ Non-blocking discovery response path
+  ✅ Automatic cleanup of abandoned sessions
 
