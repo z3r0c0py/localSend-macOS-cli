@@ -1,4 +1,4 @@
-# localSend-macOS-cli
+# localSend-cli for MacOS in Swift
 
 ### localsend-cli — Send and receive files via the LocalSend v2 protocol.
 ### Swift port of the Python CLI. macOS 12+, Swift 5.7.
