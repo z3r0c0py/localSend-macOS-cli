@@ -3,6 +3,23 @@
 ### Send and receive files via the LocalSend v2 protocol.
 ### macOS 12+, Swift 5.7.
 
+## Highlights
+
+- **Atomic, corruption-proof file saves** – Files are written to temporary storage and atomically renamed when complete. Interrupted transfers never leave behind partial files.
+
+- **Self-healing transfer sessions** – Failed, cancelled, or abandoned transfers are automatically cleaned up, preventing stuck receivers and stale "409 Busy" states.
+
+- **Efficient large-file transfers** – Uploads are streamed directly to disk with incremental chunk processing, avoiding full-file buffering and keeping memory usage low.
+
+- **Safe concurrent operation** – Multiple senders cannot interfere with each other. Busy receivers return a clear error instead of entering an invalid state.
+
+- **Robust connection management** – Connections are retained only while active and cleaned up automatically when closed.
+
+- **Hybrid device discovery** – Uses multicast for fast local discovery with reliable fallback mechanisms when multicast is unavailable.
+
+- **No keychain clutter** – Temporary TLS certificates remain in memory and are never imported into the macOS login keychain.
+
+
 ```
 ./localsend-cli --help
 localsend-cli — Send and receive files via the LocalSend v2 protocol.
@@ -66,18 +83,3 @@ The alternative — brute-force scanning the entire /24 subnet — is equally pr
 
 This CLI uses a hybrid strategy: it listens for multicast announcements first (the fast path), and only if the registry is empty after the timeout does it fall back to a targeted subnet scan. This gives you instant discovery on well-behaved networks, while still finding devices on restrictive ones — without the constant background noise of a full scan, a pragmatic tradeoff.
 
-## Highlights
-
-- **Atomic, corruption-proof file saves** – Files are written to temporary storage and atomically renamed when complete. Interrupted transfers never leave behind partial files.
-
-- **Self-healing transfer sessions** – Failed, cancelled, or abandoned transfers are automatically cleaned up, preventing stuck receivers and stale "409 Busy" states.
-
-- **Efficient large-file transfers** – Uploads are streamed directly to disk with incremental chunk processing, avoiding full-file buffering and keeping memory usage low.
-
-- **Safe concurrent operation** – Multiple senders cannot interfere with each other. Busy receivers return a clear error instead of entering an invalid state.
-
-- **Robust connection management** – Connections are retained only while active and cleaned up automatically when closed.
-
-- **Hybrid device discovery** – Uses multicast for fast local discovery with reliable fallback mechanisms when multicast is unavailable.
-
-- **No keychain clutter** – Temporary TLS certificates remain in memory and are never imported into the macOS login keychain.
