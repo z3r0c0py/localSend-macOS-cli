@@ -65,3 +65,13 @@ LocalSend's native discovery relies on UDP multicast to the 224.0.0.167 group �
 The alternative — brute-force scanning the entire /24 subnet — is equally problematic. It fires 254 HTTPS probes per interface, which is slow (1–3 seconds minimum due to connection timeouts), generates significant network noise, and can trigger intrusion detection systems on managed networks. It's also overkill on a home LAN where multicast works fine.
 
 This CLI uses a hybrid strategy: it listens for multicast announcements first (the fast path), and only if the registry is empty after the timeout does it fall back to a targeted subnet scan. This gives you instant discovery on well-behaved networks, while still finding devices on restrictive ones — without the constant background noise of a full scan, a pragmatic tradeoff.
+
+** The Roundup **
+- Atomic, corruption-proof file saves — Partial files are never left in the destination directory. If a transfer is interrupted, the temp file is cleaned up automatically.
+- Self-healing sessions — If a sender crashes or disconnects mid-transfer, the receiver automatically clears the stale session after 5 minutes, preventing the "409 Busy" deadlock.
+- Hybrid discovery — Fast multicast when it works, reliable subnet fallback when it doesn't, without the network noise of constant scanning.
+- Concurrent transfer protection – Multiple senders cannot interfere with each other. Busy receivers return a clear error instead of entering an invalid state.
+- Memory-safe connection management – Network connections are retained only while active and cleaned up automatically when closed.
+- No keychain clutter – Temporary TLS certificates remain in memory and are not imported into the user's login keychain.
+- Large file friendly – Uploads are streamed directly to disk rather than buffered in memory.
+
